@@ -1,0 +1,14 @@
+// create and use database "pokemon"
+use pokemon 
+
+// make user
+db.users.insertOne({ username: "febrian", password: "febrian1234" })
+
+// make hit count
+db.hits.insertOne({ hitsCount: 0 })
+
+// clean up pokemons collection
+db.pokemons.remove({})
+
+// reset hit count
+db.hits.updateOne({ hitsCount: {$exists: true} }, {$set: {hitsCount: 0} })
