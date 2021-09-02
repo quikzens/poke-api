@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,11 @@ import (
 )
 
 func main() {
+	// set hit per minute to 0
+	resetHitPerMinute()
+	// every 60 seconds (one minute) reset hit per minute to 0
+	setInterval(resetHitPerMinute, 60000, false)
+
 	var router = gin.Default()
 	router.GET("/add-pokemon", auth, addPokemon)
 	router.POST("/login", loginHandler)
@@ -32,7 +38,66 @@ type user struct {
 	Password string `bson:"password,omitempty" json:"password"`
 }
 
+func setInterval(someFunc func(), milliseconds int, async bool) chan bool {
+	// How often to fire the passed in function
+	// in milliseconds
+	interval := time.Duration(milliseconds) * time.Millisecond
+
+	// Setup the ticket and the channel to signal
+	// the ending of the interval
+	ticker := time.NewTicker(interval)
+	clear := make(chan bool)
+
+	// Put the selection in a go routine
+	// so that the for loop is none blocking
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				if async {
+					// This won't block
+					go someFunc()
+				} else {
+					// This will block
+					someFunc()
+				}
+			case <-clear:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
+	// We return the channel so we can pass in
+	// a value to it to clear the interval
+	return clear
+}
+
+func resetHitPerMinute() {
+	err := Redis.Set("hit", "0", 0).Err()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("reset hit per minute")
+}
+
 func addPokemon(c *gin.Context) {
+	// get hit per minute from redis
+	hit, err := Redis.Get("hit").Result()
+	if err != nil {
+		panic(err)
+	}
+
+	// check whether hit per minute is exceeded
+	if hit == "5" {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "kamu hanya bisa mengakses api ini 5x/menit",
+		})
+		c.Abort()
+		return
+	}
+
 	// database connection
 	var pokemonsColl = DB.Collection("pokemons")
 	var hitsColl = DB.Collection("hits")
@@ -49,7 +114,7 @@ func addPokemon(c *gin.Context) {
 	}
 
 	// get pokemon data
-	var data, err = pokeapi.Resource("pokemon", hitsCount.HitsCount*10, 10)
+	data, err := pokeapi.Resource("pokemon", hitsCount.HitsCount*10, 10)
 	if err != nil {
 		panic(err)
 	}
@@ -71,17 +136,39 @@ func addPokemon(c *gin.Context) {
 		panic(err)
 	}
 
+	// increment hit per minute by 1
+	_, err = Redis.Incr("hit").Result()
+	if err != nil {
+		panic(err)
+	}
+
 	c.IndentedJSON(http.StatusOK, gin.H{"message": "pokemons data has successfully added to database"})
 }
 
 func loginHandler(c *gin.Context) {
+	// get hit per minute from redis
+	hit, err := Redis.Get("hit").Result()
+	if err != nil {
+		panic(err)
+	}
+
+	// check whether hit per minute is exceeded
+	if hit == "6" {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "kamu hanya bisa mengakses api ini 5x/menit",
+		})
+		c.Abort()
+		return
+	}
+
 	// database connection
 	var usersColl = DB.Collection("users")
 
 	var userData user
 	var user user
 
-	err := c.Bind(&userData)
+	err = c.Bind(&userData)
 	if err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
@@ -124,19 +211,41 @@ func loginHandler(c *gin.Context) {
 		return
 	}
 
+	// increment hit per minute by 1
+	_, err = Redis.Incr("hit").Result()
+	if err != nil {
+		panic(err)
+	}
+
 	c.IndentedJSON(http.StatusOK, gin.H{
 		"token": token,
 	})
 }
 
 func registerHandler(c *gin.Context) {
+	// get hit per minute from redis
+	hit, err := Redis.Get("hit").Result()
+	if err != nil {
+		panic(err)
+	}
+
+	// check whether hit per minute is exceeded
+	if hit == "6" {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "kamu hanya bisa mengakses api ini 5x/menit",
+		})
+		c.Abort()
+		return
+	}
+
 	// database connection
 	var usersColl = DB.Collection("users")
 
 	var userData user
 	var user user
 
-	err := c.Bind(&userData)
+	err = c.Bind(&userData)
 	if err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
@@ -169,6 +278,12 @@ func registerHandler(c *gin.Context) {
 		})
 		c.Abort()
 		return
+	}
+
+	// increment hit per minute by 1
+	_, err = Redis.Incr("hit").Result()
+	if err != nil {
+		panic(err)
 	}
 
 	c.IndentedJSON(http.StatusOK, gin.H{
